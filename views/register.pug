@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+html(lang="en")
+  head
+    meta(charset="UTF-8")
+    meta(name="viewport", content="width=device-width, initial-scale=1.0")
+    title My home
+  body
+    h3 Register
+    #root
+      form(action="/register" method="post")
+        input(type="text" placeholder="please type your email" name="email") 
+        input(type="password" placeholder="please type your email" name="password") 
+        button(type="submit") Register
+
+      a(href="/") Login
+      if(message)
+        h5(style="color:green")= message

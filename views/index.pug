@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+html(lang="en")
+  head
+    meta(charset="UTF-8")
+    meta(name="viewport", content="width=device-width, initial-scale=1.0")
+    title My home
+  body
+    h3 JWT auth server
+    #root
+      if(!user)
+        form(action="/login" method="POST")
+          input(type="text" placeholder="please type your email" name="email") 
+          input(type="password" placeholder="please type your email" name="password") 
+          button(type="submit") Login
+        if(message)
+          h3=message
+        a(href="/register") Register
+      else
+        h2 Hello! #{user.username}
+        form(action="/logout", method="POST")
+          button(type="submit") Logout
+
