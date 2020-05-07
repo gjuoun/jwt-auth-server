@@ -25,7 +25,7 @@ const body_parser_1 = __importDefault(require("body-parser"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const path_1 = __importDefault(require("path"));
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const jsonwebtoken_1 = __importStar(require("jsonwebtoken"));
 const moment_1 = __importDefault(require("moment"));
 const db_index_1 = require("./db/db.index");
 const app = express_1.default();
@@ -40,19 +40,28 @@ const JWT_SECRET = "my-secret";
 function validateJWT(req, res, next) {
     if (!req.cookies.JWT_TOKEN) {
         logger.warn('No JWT token is provided');
-        next();
+        return next();
     }
-    const decoded = jsonwebtoken_1.default.verify(req.cookies.JWT_TOKEN, JWT_SECRET);
-    if (!decoded) {
-        next();
+    try {
+        const decoded = jsonwebtoken_1.default.verify(req.cookies.JWT_TOKEN, JWT_SECRET);
+        req.user = decoded;
     }
-    req.user = decoded;
+    catch (err) {
+        if (err instanceof jsonwebtoken_1.JsonWebTokenError) {
+            logger.info("JTW error - %s", err.message);
+        }
+        else if (err instanceof jsonwebtoken_1.NotBeforeError) {
+            logger.info('JTW not before err - %s', err.message);
+        }
+        else if (err instanceof jsonwebtoken_1.TokenExpiredError) {
+            logger.info('JWT expired - %s', err.message);
+        }
+    }
     next();
 }
 app.get('/', validateJWT, (req, res) => {
-    logger.info(req.user);
-    // logger.info(`get request from ${req.ip} - ${req.originalUrl}`)
-    res.render('index');
+    logger.debug('user - %o', req.user);
+    res.render('index', req.user ? { user: req.user } : {});
 });
 app.get('/register', (req, res) => {
     res.render('register');

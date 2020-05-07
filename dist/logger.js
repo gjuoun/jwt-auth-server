@@ -9,7 +9,7 @@ const { format, transports } = winston_1.default;
 class Logger {
     constructor() { }
     getFormat(label, colorize) {
-        return format.combine((colorize ? format.colorize() : format.simple()), format.label({ label }), format.timestamp(), format.printf((info) => {
+        return format.combine((colorize ? format.colorize() : format.simple()), format.label({ label }), format.timestamp(), format.splat(), format.printf((info) => {
             const title = colorize ? chalk_1.default.green.bold(info.label) : info.label;
             return `<${title}>${info.timestamp}[${info.level}]: ${info.message}`;
         }));

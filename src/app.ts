@@ -4,7 +4,7 @@ import bodyParser from 'body-parser'
 import cookieParser from 'cookie-parser'
 import path from 'path'
 import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
+import jwt, { VerifyErrors, JsonWebTokenError, NotBeforeError, TokenExpiredError } from 'jsonwebtoken'
 import moment from 'moment'
 import { db, dbLogger } from './db/db.index'
 import { QueryConfig } from 'pg'
@@ -30,20 +30,21 @@ function validateJWT(
 
   if (!req.cookies.JWT_TOKEN) {
     logger.warn('No JWT token is provided')
-    next()
+    return next()
   }
 
-  const decoded = jwt.verify(req.cookies.JWT_TOKEN, JWT_SECRET)
-  if (!decoded) {
-    next()
+  try {
+    const decoded = jwt.verify(req.cookies.JWT_TOKEN, JWT_SECRET)
+    req.user = <{ username: string }>decoded
+  } catch (err) {
+    logger.info("JTW error - %s", err.message)
   }
-  req.user = <{ username: string }>decoded
+
   next()
 }
 
 app.get('/', validateJWT, (req, res) => {
-  logger.debug('user - %o',req.user)
-  // logger.info(`get request from ${req.ip} - ${req.originalUrl}`)
+  logger.debug('user - %o', req.user)
   res.render('index', req.user ? { user: req.user } : {})
 })
 
@@ -92,11 +93,11 @@ app.post('/login', async (req, res) => {
   if (result.rowCount === 0) {
     return res.render('index', { message: `You are unable to login using ${email}` })
   }
-  const { username } = result.rows[0]
   if (!bcrypt.compareSync(password, result.rows[0].password)) {
     return res.render('index', { message: "Incorrect password" })
   }
 
+  const { username } = result.rows[0]
   // set JWT_TOKEN cookie
   res.cookie(`JWT_TOKEN`,
     jwt.sign({ username }, JWT_SECRET)
