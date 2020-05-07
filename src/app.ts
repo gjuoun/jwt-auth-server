@@ -9,10 +9,14 @@ import moment from 'moment'
 import { db, dbLogger } from './db/db.index'
 import { QueryConfig } from 'pg'
 
+/* -------------------------------------------------------------------------- */
+/*                             Initialization app                             */
+/* -------------------------------------------------------------------------- */
+
 const app = express()
-
-
 const logger = Logger.getConsoleLogger("app", LOGGING_LEVEL.SILLY)
+
+/* ------------------------------- middlewares ------------------------------ */
 
 app.use(bodyParser.urlencoded({ extended: false }))
 app.use(bodyParser.json())
@@ -21,7 +25,18 @@ app.use(cookieParser())
 app.set('view engine', 'pug')
 app.set('views', path.join(__dirname, "../views"))
 
+/* -------------------------------- Constant -------------------------------- */
+
 const JWT_SECRET = "my-secret"
+
+/* -------------------------------------------------------------------------- */
+/*                           End initialization app                           */
+/* -------------------------------------------------------------------------- */
+
+
+
+
+/* ---------------------------- custom middleware --------------------------- */
 
 function validateJWT(
   req: express.Request,
@@ -43,11 +58,14 @@ function validateJWT(
   next()
 }
 
+/* ------------------------------- index route ------------------------------ */
+
 app.get('/', validateJWT, (req, res) => {
   logger.debug('user - %o', req.user)
   res.render('index', req.user ? { user: req.user } : {})
 })
 
+/* ----------------------------- register route ----------------------------- */
 app.get('/register', (req, res) => {
   res.render('register')
 })
@@ -74,6 +92,8 @@ app.post('/register', async (req, res) => {
   // res.send({ success: true, data: `Register ${email} successfully` })
   res.render('register', { message: `Register ${email} successfully` })
 })
+
+/* ------------------------------- login route ------------------------------ */
 
 app.get('/login', (req, res) => {
   res.render('index')
@@ -111,11 +131,15 @@ app.post('/login', async (req, res) => {
 
 })
 
+/* ------------------------------ logout route ------------------------------ */
+
 app.post('/logout', (req, res) => {
   res.redirect('/')
 })
 
-
+/* -------------------------------------------------------------------------- */
+/*                                Server Start                                */
+/* -------------------------------------------------------------------------- */
 app.listen(6009, () => {
   console.log("Server running at 6009")
 })
