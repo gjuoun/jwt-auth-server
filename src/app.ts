@@ -66,9 +66,6 @@ app.get('/', (req, res) => {
 })
 
 /* ----------------------------- register route ----------------------------- */
-app.get('/register', (req, res) => {
-  res.render('register')
-})
 
 app.post('/register', async (req, res) => {
   const { email, password } = req.body
@@ -79,7 +76,7 @@ app.post('/register', async (req, res) => {
 
   const result = await db.query(query)
   if (result.rowCount > 0) {
-    return res.render('register', { message: 'email is not available' })
+    return res.status(409).send({ success: false, message: 'email is not available' })
   }
 
   const insertQuery: QueryConfig = {

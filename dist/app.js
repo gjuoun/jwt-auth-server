@@ -27,7 +27,6 @@ const logger_1 = __importStar(require("./logger"));
 const express_1 = __importDefault(require("express"));
 const body_parser_1 = __importDefault(require("body-parser"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
-const path_1 = __importDefault(require("path"));
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const db_index_1 = require("./db/db.index");
@@ -40,37 +39,42 @@ const logger = logger_1.default.getConsoleLogger("app", logger_1.LOGGING_LEVEL.S
 app.use(body_parser_1.default.urlencoded({ extended: false }));
 app.use(body_parser_1.default.json());
 app.use(cookie_parser_1.default());
-// app.use(express.static(path.join(__dirname, '../static')))
-app.set('view engine', 'pug');
-app.set('views', path_1.default.join(__dirname, "../views"));
-/* -------------------------------- Constant -------------------------------- */
-const JWT_SECRET = "my-secret";
 /* -------------------------------------------------------------------------- */
 /*                           End initialization app                           */
 /* -------------------------------------------------------------------------- */
 /* ---------------------------- custom middleware --------------------------- */
-function validateJWT(req, res, next) {
-    if (!req.cookies.JWT_TOKEN) {
-        logger.warn('No JWT token is provided');
-        return next();
-    }
-    try {
-        req.user = jsonwebtoken_1.default.verify(req.cookies.JWT_TOKEN, JWT_SECRET);
-    }
-    catch (err) {
-        logger.info("JTW error - %s", err.message);
-    }
-    next();
+function validateRefreshToken(req, res, next) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const refreshToken = req.body.refreshToken;
+        if (!refreshToken) {
+            return res.sendStatus(401);
+        }
+        try {
+            const decodedUser = jsonwebtoken_1.default.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET);
+            const query = {
+                text: `SELECT token FROM public.jwt_auth WHERE username = $1`,
+                values: [decodedUser.username]
+            };
+            const result = yield db_index_1.db.query(query);
+            if (result.rowCount === 0) {
+                throw new Error('user does not exist');
+            }
+            else if (result.rows[0].token !== refreshToken) {
+                throw new Error('invalid refresh token');
+            }
+            req.user = decodedUser;
+            next();
+        }
+        catch (err) {
+            logger.warn('%s%s: %s', req.method, req.url, err.message);
+            return res.send({ success: false, message: "Invalid refresh token" });
+        }
+    });
 }
 /* ------------------------------- index route ------------------------------ */
-app.get('/', validateJWT, (req, res) => {
-    logger.debug('user - %o', req.user);
-    res.render('index', req.user ? { user: req.user } : {});
+app.get('/', (req, res) => {
 });
 /* ----------------------------- register route ----------------------------- */
-app.get('/register', (req, res) => {
-    res.render('register');
-});
 app.post('/register', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { email, password } = req.body;
     const query = {
@@ -79,7 +83,7 @@ app.post('/register', (req, res) => __awaiter(void 0, void 0, void 0, function* 
     };
     const result = yield db_index_1.db.query(query);
     if (result.rowCount > 0) {
-        return res.render('register', { message: 'email is not available' });
+        return res.status(409).send({ success: false, message: 'email is not available' });
     }
     const insertQuery = {
         text: `INSERT INTO public.jwt_auth(username, password, role)
@@ -90,9 +94,6 @@ app.post('/register', (req, res) => __awaiter(void 0, void 0, void 0, function* 
     res.send({ success: true, message: `Register ${email} successfully` });
 }));
 /* ------------------------------- login route ------------------------------ */
-app.get('/login', (req, res) => {
-    res.render('index');
-});
 app.post('/login', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { username, password } = req.body;
     try {
@@ -131,54 +132,28 @@ app.post('/login', (req, res) => __awaiter(void 0, void 0, void 0, function* () 
     }
 }));
 /* ------------------------------ /token route ------------------------------ */
-app.post('/token', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const refreshToken = req.body.refreshToken;
-    if (!refreshToken) {
-        return res.sendStatus(401);
-    }
-    try {
-        const decodedUser = jsonwebtoken_1.default.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET);
-        // check the token if it's still valid
-        const query = {
-            text: `SELECT token FROM public.jwt_auth WHERE username = $1`,
-            values: [decodedUser.username]
-        };
-        const result = yield db_index_1.db.query(query);
-        if (result.rowCount === 0) {
-            throw new Error('token does not exist');
-        }
-        else if (result.rows[0].token !== refreshToken) {
-            throw new Error('invalid refresh token');
-        }
-        const accessToken = jsonwebtoken_1.default.sign({ username: decodedUser.username }, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '30s' });
+app.post('/token', validateRefreshToken, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    if (req.user) {
+        const accessToken = jsonwebtoken_1.default.sign({ username: req.user.username }, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '30s' });
         res.send({ success: true, data: { accessToken } });
     }
-    catch (e) {
-        logger.error('/token: %s', e.message);
-        res.send({ success: false, message: "Invalid refresh token" });
+    else {
+        res.sendStatus(401);
     }
 }));
 /* ------------------------------ logout route ------------------------------ */
-app.delete('/logout', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const refreshToken = req.body.refreshToken;
-    if (!refreshToken) {
-        return res.sendStatus(401);
-    }
-    try {
-        const decodedUser = jsonwebtoken_1.default.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET);
-        res.send({ success: true, message: `${decodedUser.username} is logged out` });
+app.delete('/logout', validateRefreshToken, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    if (req.user) {
+        res.send({ success: true, message: `${req.user.username} is logged out` });
         // set token to null
         const updateQuery = {
             text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
-            values: [decodedUser.username, null]
+            values: [req.user.username, null]
         };
         yield db_index_1.db.query(updateQuery);
     }
-    catch (e) {
-        logger.error('/logout %s', e.message);
-        res.send({
-            success: false, message: `Invalid token `
-        });
+    else {
+        res.sendStatus(403);
     }
 }));
 /* ------------------------------- GET /posts ------------------------------- */
@@ -203,7 +178,7 @@ app.get('/posts', (req, res) => {
         res.send({ success: true, data: posts });
     }
     catch (e) {
-        logger.error('/posts %s', e.message);
+        logger.error('/posts: %s', e.message);
         res.send({
             success: false, message: `Invalid access token`
         });
