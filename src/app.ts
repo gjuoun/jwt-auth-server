@@ -9,10 +9,10 @@ import bodyParser from 'body-parser'
 import cookieParser from 'cookie-parser'
 import path from 'path'
 import bcrypt from 'bcryptjs'
-import jwt, { VerifyErrors, JsonWebTokenError, NotBeforeError, TokenExpiredError } from 'jsonwebtoken'
-import moment from 'moment'
-import { db, dbLogger } from './db/db.index'
+import jwt from 'jsonwebtoken'
 import { QueryConfig } from 'pg'
+import { db, dbLogger } from './db/db.index'
+import { User } from './types/User'
 
 /* -------------------------------------------------------------------------- */
 /*                             Initialization app                             */
@@ -26,48 +26,43 @@ const logger = Logger.getConsoleLogger("app", LOGGING_LEVEL.SILLY)
 app.use(bodyParser.urlencoded({ extended: false }))
 app.use(bodyParser.json())
 app.use(cookieParser())
-// app.use(express.static(path.join(__dirname, '../static')))
-app.set('view engine', 'pug')
-app.set('views', path.join(__dirname, "../views"))
-
-/* -------------------------------- Constant -------------------------------- */
-
-const JWT_SECRET = "my-secret"
-
 /* -------------------------------------------------------------------------- */
 /*                           End initialization app                           */
 /* -------------------------------------------------------------------------- */
 
 
-
-
 /* ---------------------------- custom middleware --------------------------- */
-
-function validateJWT(
+async function validateRefreshToken(
   req: express.Request,
   res: express.Response,
   next: NextFunction) {
-
-  if (!req.cookies.JWT_TOKEN) {
-    logger.warn('No JWT token is provided')
-    return next()
+  const refreshToken = req.body.refreshToken
+  if (!refreshToken) {
+    return res.sendStatus(401)
   }
-
   try {
-    const decodedUser = jwt.verify(req.cookies.JWT_TOKEN, JWT_SECRET)
-    req.user = <{ username: string }>decodedUser
+    const decodedUser = <User>jwt.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET!)
+    const query: QueryConfig = {
+      text: `SELECT token FROM public.jwt_auth WHERE username = $1`,
+      values: [decodedUser.username]
+    }
+    const result = await db.query(query)
+    if (result.rowCount === 0) {
+      throw new Error('user does not exist')
+    } else if (result.rows[0].token !== refreshToken) {
+      throw new Error('invalid refresh token')
+    }
+    req.user = decodedUser
+    next()
   } catch (err) {
-    logger.info("JTW error - %s", err.message)
+    logger.warn('%s%s: %s', req.method, req.url, err.message)
+    return res.send({ success: false, message: "Invalid refresh token" })
   }
-
-  next()
 }
 
 /* ------------------------------- index route ------------------------------ */
 
-app.get('/', validateJWT, (req, res) => {
-  logger.debug('user - %o', req.user)
-  res.render('index', req.user ? { user: req.user } : {})
+app.get('/', (req, res) => {
 })
 
 /* ----------------------------- register route ----------------------------- */
@@ -99,86 +94,76 @@ app.post('/register', async (req, res) => {
 
 /* ------------------------------- login route ------------------------------ */
 
-app.get('/login', (req, res) => {
-  res.render('index')
-})
 app.post('/login', async (req, res) => {
   const { username, password } = req.body
 
-  // empty email or password
-  if (!username || !password) {
-    return res.send({ success: false, message: "email or password is empty" })
-  }
+  try {
+    // empty email or password
+    if (!username || !password) {
+      return res.send({ success: false, message: "email or password is empty" })
+    }
 
-  const query: QueryConfig = {
-    text: `SELECT * FROM public.jwt_auth WHERE username = $1`,
-    values: [username]
-  }
-  const result = await db.query(query)
-  // not found user
-  if (result.rowCount === 0) {
-    return res.send({ success: false, message: `You are unable to login using ${username}` })
-  }
-  // wrong password
-  if (!bcrypt.compareSync(password, result.rows[0].password)) {
-    return res.send({ success: false, message: "Incorrect password" })
-  }
+    const query: QueryConfig = {
+      text: `SELECT * FROM public.jwt_auth WHERE username = $1`,
+      values: [username]
+    }
+    const result = await db.query(query)
+    // not found user
+    if (result.rowCount === 0) {
+      throw new Error(`No user exists: ${username}`)
+    }
+    // wrong password
+    else if (!bcrypt.compareSync(password, result.rows[0].password)) {
+      throw new Error("Incorrect password")
+    }
 
-  // generate tokens
-  const user = { username: result.rows[0].username }
-  const accessToken = jwt.sign(user, process.env.JWT_ACCESS_TOKEN_SECRET!,
-    { expiresIn: '30s', })
-  const refreshToken = jwt.sign(user, process.env.JWT_REFRESH_TOKEN_SECRET!)
+    // generate tokens
+    const user = { username: result.rows[0].username }
+    const accessToken = jwt.sign(user, process.env.JWT_ACCESS_TOKEN_SECRET!,
+      { expiresIn: '30s', })
+    const refreshToken = jwt.sign(user, process.env.JWT_REFRESH_TOKEN_SECRET!)
 
-  // update token
-  const updateQuery: QueryConfig = {
-    text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
-    values: [username, refreshToken]
+    // update token
+    const updateQuery: QueryConfig = {
+      text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
+      values: [username, refreshToken]
+    }
+
+    res.send({ success: true, data: { accessToken, refreshToken } })
+    await db.query(updateQuery)
+  } catch (err) {
+    logger.warn('/login: %s', err.message)
+    res.send({ succsss: false, message: "Unable to login" })
   }
-
-  res.send({ success: true, data: { accessToken, refreshToken } })
-  await db.query(updateQuery)
 })
 
 /* ------------------------------ /token route ------------------------------ */
-app.post('/token', (req, res) => {
-  const refreshToken = req.body.refreshToken
-  if (!refreshToken) {
-    return res.sendStatus(401)
-  }
-
-  try {
-    const decodedUser = jwt.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET!)
-    const accessToken = jwt.sign(decodedUser, process.env.JWT_ACCESS_TOKEN_SECRET!, { expiresIn: '30s' })
+app.post('/token', validateRefreshToken, async (req, res) => {
+  if (req.user) {
+    const accessToken = jwt.sign({ username: req.user.username }, process.env.JWT_ACCESS_TOKEN_SECRET!, { expiresIn: '30s' })
     res.send({ success: true, data: { accessToken } })
-  } catch (e) {
-    logger.error('Invalid token: %s', e.message)
+  } else {
+    res.sendStatus(401)
   }
 })
 
 /* ------------------------------ logout route ------------------------------ */
 
-app.delete('/logout', async (req, res) => {
-  const refreshToken = req.body.refreshToken
-  if (!refreshToken) {
-    return res.sendStatus(401)
-  }
+app.delete('/logout', validateRefreshToken, async (req, res) => {
 
-  try {
-    const decodedUser = <{ username: string }>jwt.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET!)
-    res.send({ success: true, message: `${decodedUser.username} is logged out` })
+  if (req.user) {
+    res.send({ success: true, message: `${req.user.username} is logged out` })
     // set token to null
     const updateQuery: QueryConfig = {
       text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
-      values: [decodedUser.username, null]
+      values: [req.user.username, null]
     }
     await db.query(updateQuery)
-  } catch (e) {
-    logger.error('Invalid token: %s', e.message)
-    res.send({
-      success: false, message: `Invalid token `
-    })
   }
+  else {
+    res.sendStatus(403)
+  }
+
 })
 
 /* ------------------------------- GET /posts ------------------------------- */
@@ -194,15 +179,16 @@ const posts = [
 ]
 
 app.get('/posts', (req, res) => {
-  const accessToken = req.body.accessToken
+  const accessToken = req.headers.authorization?.replace('Bearer ', '')
   if (!accessToken) {
     return res.sendStatus(403)
   }
 
   try {
-    const decodedUser = <{ username: string }>jwt.verify(accessToken, process.env.JWT_ACCESS_TOKEN_SECRET!)
+    const decodedUser = <User>jwt.verify(accessToken, process.env.JWT_ACCESS_TOKEN_SECRET!)
     res.send({ success: true, data: posts })
   } catch (e) {
+    logger.error('/posts: %s', e.message)
     res.send({
       success: false, message: `Invalid access token`
     })

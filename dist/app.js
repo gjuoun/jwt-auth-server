@@ -55,8 +55,7 @@ function validateJWT(req, res, next) {
         return next();
     }
     try {
-        const decoded = jsonwebtoken_1.default.verify(req.cookies.JWT_TOKEN, JWT_SECRET);
-        req.user = decoded;
+        req.user = jsonwebtoken_1.default.verify(req.cookies.JWT_TOKEN, JWT_SECRET);
     }
     catch (err) {
         logger.info("JTW error - %s", err.message);
@@ -96,52 +95,71 @@ app.get('/login', (req, res) => {
 });
 app.post('/login', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { username, password } = req.body;
-    // empty email or password
-    if (!username || !password) {
-        return res.send({ success: false, message: "email or password is empty" });
+    try {
+        // empty email or password
+        if (!username || !password) {
+            return res.send({ success: false, message: "email or password is empty" });
+        }
+        const query = {
+            text: `SELECT * FROM public.jwt_auth WHERE username = $1`,
+            values: [username]
+        };
+        const result = yield db_index_1.db.query(query);
+        // not found user
+        if (result.rowCount === 0) {
+            throw new Error(`No user exists: ${username}`);
+        }
+        // wrong password
+        else if (!bcryptjs_1.default.compareSync(password, result.rows[0].password)) {
+            throw new Error("Incorrect password");
+        }
+        // generate tokens
+        const user = { username: result.rows[0].username };
+        const accessToken = jsonwebtoken_1.default.sign(user, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '30s', });
+        const refreshToken = jsonwebtoken_1.default.sign(user, process.env.JWT_REFRESH_TOKEN_SECRET);
+        // update token
+        const updateQuery = {
+            text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
+            values: [username, refreshToken]
+        };
+        res.send({ success: true, data: { accessToken, refreshToken } });
+        yield db_index_1.db.query(updateQuery);
     }
-    const query = {
-        text: `SELECT * FROM public.jwt_auth WHERE username = $1`,
-        values: [username]
-    };
-    const result = yield db_index_1.db.query(query);
-    // not found user
-    if (result.rowCount === 0) {
-        return res.send({ success: false, message: `You are unable to login using ${username}` });
+    catch (err) {
+        logger.warn('/login: %s', err.message);
+        res.send({ succsss: false, message: "Unable to login" });
     }
-    // wrong password
-    if (!bcryptjs_1.default.compareSync(password, result.rows[0].password)) {
-        return res.send({ success: false, message: "Incorrect password" });
-    }
-    // generate tokens
-    const user = { username: result.rows[0].username };
-    const accessToken = jsonwebtoken_1.default.sign(user, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '30s', });
-    const refreshToken = jsonwebtoken_1.default.sign(user, process.env.JWT_REFRESH_TOKEN_SECRET);
-    // update token
-    const updateQuery = {
-        text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
-        values: [username, refreshToken]
-    };
-    res.send({ success: true, data: { accessToken, refreshToken } });
-    yield db_index_1.db.query(updateQuery);
 }));
 /* ------------------------------ /token route ------------------------------ */
-app.post('/token', (req, res) => {
+app.post('/token', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const refreshToken = req.body.refreshToken;
     if (!refreshToken) {
         return res.sendStatus(401);
     }
     try {
         const decodedUser = jsonwebtoken_1.default.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET);
-        const accessToken = jsonwebtoken_1.default.sign(decodedUser, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '30s' });
+        // check the token if it's still valid
+        const query = {
+            text: `SELECT token FROM public.jwt_auth WHERE username = $1`,
+            values: [decodedUser.username]
+        };
+        const result = yield db_index_1.db.query(query);
+        if (result.rowCount === 0) {
+            throw new Error('token does not exist');
+        }
+        else if (result.rows[0].token !== refreshToken) {
+            throw new Error('invalid refresh token');
+        }
+        const accessToken = jsonwebtoken_1.default.sign({ username: decodedUser.username }, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '30s' });
         res.send({ success: true, data: { accessToken } });
     }
     catch (e) {
-        logger.error('Invalid token: %s', e.message);
+        logger.error('/token: %s', e.message);
+        res.send({ success: false, message: "Invalid refresh token" });
     }
-});
+}));
 /* ------------------------------ logout route ------------------------------ */
-app.post('/logout', (req, res) => {
+app.delete('/logout', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const refreshToken = req.body.refreshToken;
     if (!refreshToken) {
         return res.sendStatus(401);
@@ -149,11 +167,45 @@ app.post('/logout', (req, res) => {
     try {
         const decodedUser = jsonwebtoken_1.default.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET);
         res.send({ success: true, message: `${decodedUser.username} is logged out` });
+        // set token to null
+        const updateQuery = {
+            text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
+            values: [decodedUser.username, null]
+        };
+        yield db_index_1.db.query(updateQuery);
     }
     catch (e) {
-        logger.error('Invalid token: %s', e.message);
+        logger.error('/logout %s', e.message);
         res.send({
             success: false, message: `Invalid token `
+        });
+    }
+}));
+/* ------------------------------- GET /posts ------------------------------- */
+const posts = [
+    {
+        username: 'gjuoun',
+        postId: '1'
+    },
+    {
+        username: 'jun',
+        postId: '2'
+    }
+];
+app.get('/posts', (req, res) => {
+    var _a;
+    const accessToken = (_a = req.headers.authorization) === null || _a === void 0 ? void 0 : _a.replace('Bearer ', '');
+    if (!accessToken) {
+        return res.sendStatus(403);
+    }
+    try {
+        const decodedUser = jsonwebtoken_1.default.verify(accessToken, process.env.JWT_ACCESS_TOKEN_SECRET);
+        res.send({ success: true, data: posts });
+    }
+    catch (e) {
+        logger.error('/posts %s', e.message);
+        res.send({
+            success: false, message: `Invalid access token`
         });
     }
 });
