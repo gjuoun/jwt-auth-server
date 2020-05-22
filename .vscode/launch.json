@@ -7,7 +7,7 @@
     {
       "type": "node",
       "request": "launch",
-      "name": "Launch Program",
+      "name": "Debug app.ts",
       "skipFiles": ["<node_internals>/**"],
       "outputCapture": "std",
       "preLaunchTask": "npm: build",

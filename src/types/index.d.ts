@@ -1,11 +1,20 @@
 declare global {
+
   namespace Express {
-    export interface Request {
+    interface Request {
       user: {
         username: string
       }
     }
+
+    interface Response{
+      message: any
+      data: any
+    }
+
   }
 }
+
+
 
 export { }
