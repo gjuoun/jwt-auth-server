@@ -39,25 +39,29 @@ async function validateRefreshToken(
   next: NextFunction) {
   const refreshToken = req.body.refreshToken
   if (!refreshToken) {
-    throw new HttpError(401, "No refresh token is provided")
+    return next(new HttpError(401, "No refresh token is provided"))
   }
 
-  // decode user from req.body
-  const decodedUser = <User>jwt.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET!)
-  const query: QueryConfig = {
-    text: `SELECT token FROM public.jwt_auth WHERE username = $1`,
-    values: [decodedUser.username]
+  try {
+    // decode user from req.body
+    const decodedUser = <User>jwt.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET!)
+    const query: QueryConfig = {
+      text: `SELECT token FROM public.jwt_auth WHERE username = $1`,
+      values: [decodedUser.username]
+    }
+    const result = await db.query(query)
+    if (result.rowCount === 0) {
+      return next(new HttpError(401, 'user does not exist'))
+    } else if (result.rows[0].token !== refreshToken) {
+      return next(new HttpError(404, 'invalid refresh token'))
+    }
+    // set user
+    req.user = decodedUser
+    next()
   }
-  const result = await db.query(query)
-  if (result.rowCount === 0) {
-    next(new HttpError(401, 'user does not exist'))
-  } else if (result.rows[0].token !== refreshToken) {
-    next(new HttpError(404, 'invalid refresh token'))
+  catch (e) {
+    next(e)
   }
-  // set user
-  req.user = decodedUser
-  next()
-
 }
 
 /* ------------------------------- index route ------------------------------ */
@@ -76,7 +80,7 @@ app.post('/register', async (req, res, next) => {
 
   const result = await db.query(query)
   if (result.rowCount > 0) {
-    next(new HttpError(409, "email is not available"))
+    return next(new HttpError(409, "email is not available"))
   }
 
   const insertQuery: QueryConfig = {
@@ -96,41 +100,45 @@ app.post('/register', async (req, res, next) => {
 app.post('/login', async (req, res, next) => {
   const { username, password } = req.body
 
-  // empty email or password
-  if (!username || !password) {
-    next(new HttpError(301, "email or password is empty"))
-  }
+  try {
+    // empty email or password
+    if (!username || !password) {
+      return next(new HttpError(301, "email or password is empty"))
+    }
 
-  const query: QueryConfig = {
-    text: `SELECT * FROM public.jwt_auth WHERE username = $1`,
-    values: [username]
-  }
-  const result = await db.query(query)
-  // not found user
-  if (result.rowCount === 0) {
-    next(new HttpError(301, `No user exists: ${username}`))
-  }
-  // wrong password
-  else if (!bcrypt.compareSync(password, result.rows[0].password)) {
-    next(new HttpError(301, `Incorrect Password`))
-  }
+    const query: QueryConfig = {
+      text: `SELECT * FROM public.jwt_auth WHERE username = $1`,
+      values: [username]
+    }
+    const result = await db.query(query)
+    // not found user
+    if (result.rowCount === 0) {
+      return next(new HttpError(301, `No user exists: ${username}`))
+    }
+    // wrong password
+    else if (!bcrypt.compareSync(password, result.rows[0].password)) {
+      return next(new HttpError(301, `Incorrect Password`))
+    }
 
-  // generate tokens
-  const user = { username: result.rows[0].username }
-  const accessToken = jwt.sign(user, process.env.JWT_ACCESS_TOKEN_SECRET!,
-    { expiresIn: '30s', })
-  const refreshToken = jwt.sign(user, process.env.JWT_REFRESH_TOKEN_SECRET!)
+    // generate tokens
+    const user = { username: result.rows[0].username }
+    const accessToken = jwt.sign(user, process.env.JWT_ACCESS_TOKEN_SECRET!,
+      { expiresIn: '30s', })
+    const refreshToken = jwt.sign(user, process.env.JWT_REFRESH_TOKEN_SECRET!)
 
-  // update token
-  const updateQuery: QueryConfig = {
-    text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
-    values: [username, refreshToken]
+    // update token
+    const updateQuery: QueryConfig = {
+      text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
+      values: [username, refreshToken]
+    }
+
+    // set payload
+    res.data = { accessToken, refreshToken }
+    await db.query(updateQuery)
+    next()
+  } catch (e) {
+    next(e)
   }
-
-  // set payload
-  res.data = { accessToken, refreshToken }
-  await db.query(updateQuery)
-  next()
 })
 
 /* ------------------------------ /token route ------------------------------ */
@@ -174,7 +182,7 @@ const posts = [
 app.get('/posts', (req, res, next) => {
   const accessToken = req.headers.authorization?.replace('Bearer ', '')
   if (!accessToken) {
-    next(new HttpError(403, "No access token is provided"))
+    return next(new HttpError(403, "No access token is provided"))
   }
 
   try {

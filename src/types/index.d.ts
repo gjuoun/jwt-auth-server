@@ -11,7 +11,13 @@ declare global {
       message: any
       data: any
     }
+  }
 
+
+  namespace jest {
+    interface Matchers<R> {
+      toBeSuccess(): R;
+    }
   }
 }
 
