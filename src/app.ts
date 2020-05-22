@@ -50,9 +50,9 @@ async function validateRefreshToken(
   }
   const result = await db.query(query)
   if (result.rowCount === 0) {
-    throw new HttpError(401, 'user does not exist')
+    next(new HttpError(401, 'user does not exist'))
   } else if (result.rows[0].token !== refreshToken) {
-    throw new HttpError(404, 'invalid refresh token')
+    next(new HttpError(404, 'invalid refresh token'))
   }
   // set user
   req.user = decodedUser
@@ -76,7 +76,7 @@ app.post('/register', async (req, res, next) => {
 
   const result = await db.query(query)
   if (result.rowCount > 0) {
-    throw new HttpError(409, "email is not available")
+    next(new HttpError(409, "email is not available"))
   }
 
   const insertQuery: QueryConfig = {
@@ -98,7 +98,7 @@ app.post('/login', async (req, res, next) => {
 
   // empty email or password
   if (!username || !password) {
-    throw new HttpError(301, "email or password is empty")
+    next(new HttpError(301, "email or password is empty"))
   }
 
   const query: QueryConfig = {
@@ -108,11 +108,11 @@ app.post('/login', async (req, res, next) => {
   const result = await db.query(query)
   // not found user
   if (result.rowCount === 0) {
-    throw new HttpError(301, `No user exists: ${username}`)
+    next(new HttpError(301, `No user exists: ${username}`))
   }
   // wrong password
   else if (!bcrypt.compareSync(password, result.rows[0].password)) {
-    throw new HttpError(301, `Incorrect Password`)
+    next(new HttpError(301, `Incorrect Password`))
   }
 
   // generate tokens
@@ -144,10 +144,9 @@ app.post('/token', validateRefreshToken, async (req, res, next) => {
 
 /* ------------------------------ logout route ------------------------------ */
 
-app.delete('/logout', validateRefreshToken, async (req, res,next) => {
+app.delete('/logout', validateRefreshToken, async (req, res, next) => {
 
   if (req.user) {
-    res.send({ success: true, message: `${req.user.username} is logged out` })
     // set token to null
     const updateQuery: QueryConfig = {
       text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
@@ -175,20 +174,20 @@ const posts = [
 app.get('/posts', (req, res, next) => {
   const accessToken = req.headers.authorization?.replace('Bearer ', '')
   if (!accessToken) {
-    throw new HttpError(403, "No access token is provided")
+    next(new HttpError(403, "No access token is provided"))
   }
 
   try {
-    const decodedUser = <User>jwt.verify(accessToken, process.env.JWT_ACCESS_TOKEN_SECRET!)
-    res.data = {  posts }
+    const decodedUser = <User>jwt.verify(accessToken!, process.env.JWT_ACCESS_TOKEN_SECRET!)
+    res.data = { posts }
     next()
   } catch (e) {
-    throw new HttpError(401, "Invalid access token")
+    next(new HttpError(401, "Invalid access token"))
   }
 })
 
 /* ------------------------------ data handling ----------------------------- */
-app.use((err: Error, req: express.Request, res: express.Response, next: NextFunction) => {
+app.use((req: express.Request, res: express.Response, next: NextFunction) => {
   if (res.data || res.message) {
     res.send({
       success: true,
@@ -202,13 +201,17 @@ app.use((err: Error, req: express.Request, res: express.Response, next: NextFunc
 
 /* ----------------------------- error handling ----------------------------- */
 app.use(function (err: Error, req: express.Request, res: express.Response, next: NextFunction) {
-  if (err) {
-    res.status(404).send({
+  if (err instanceof HttpError) {
+    res.status(err.status).send({
+      success: false,
+      message: err.message
+    })
+  } else {
+    res.status(500).send({
       success: false,
       message: err.message
     })
   }
-  next()
 })
 
 /* -------------------------------------------------------------------------- */

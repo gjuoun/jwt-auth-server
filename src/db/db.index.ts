@@ -14,8 +14,9 @@ const client = new Client({
 client.connect((err) => {
   if (err) {
     logger.error(err.message)
+  }else{
+    logger.info('connected to DB')
   }
-  logger.info('connected to DB')
 })
 
 client.on("error", (err) => {

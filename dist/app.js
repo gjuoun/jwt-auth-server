@@ -30,6 +30,7 @@ const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const db_index_1 = require("./db/db.index");
+const HttpError_1 = require("./types/HttpError");
 /* -------------------------------------------------------------------------- */
 /*                             Initialization app                             */
 /* -------------------------------------------------------------------------- */
@@ -47,35 +48,31 @@ function validateRefreshToken(req, res, next) {
     return __awaiter(this, void 0, void 0, function* () {
         const refreshToken = req.body.refreshToken;
         if (!refreshToken) {
-            return res.sendStatus(401);
+            throw new HttpError_1.HttpError(401, "No refresh token is provided");
         }
-        try {
-            const decodedUser = jsonwebtoken_1.default.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET);
-            const query = {
-                text: `SELECT token FROM public.jwt_auth WHERE username = $1`,
-                values: [decodedUser.username]
-            };
-            const result = yield db_index_1.db.query(query);
-            if (result.rowCount === 0) {
-                throw new Error('user does not exist');
-            }
-            else if (result.rows[0].token !== refreshToken) {
-                throw new Error('invalid refresh token');
-            }
-            req.user = decodedUser;
-            next();
+        // decode user from req.body
+        const decodedUser = jsonwebtoken_1.default.verify(refreshToken, process.env.JWT_REFRESH_TOKEN_SECRET);
+        const query = {
+            text: `SELECT token FROM public.jwt_auth WHERE username = $1`,
+            values: [decodedUser.username]
+        };
+        const result = yield db_index_1.db.query(query);
+        if (result.rowCount === 0) {
+            throw new HttpError_1.HttpError(401, 'user does not exist');
         }
-        catch (err) {
-            logger.warn('%s%s: %s', req.method, req.url, err.message);
-            return res.send({ success: false, message: "Invalid refresh token" });
+        else if (result.rows[0].token !== refreshToken) {
+            throw new HttpError_1.HttpError(404, 'invalid refresh token');
         }
+        // set user
+        req.user = decodedUser;
+        next();
     });
 }
 /* ------------------------------- index route ------------------------------ */
 app.get('/', (req, res) => {
 });
 /* ----------------------------- register route ----------------------------- */
-app.post('/register', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+app.post('/register', (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     const { email, password } = req.body;
     const query = {
         text: `SELECT * FROM public.jwt_auth WHERE username = $1`,
@@ -83,7 +80,7 @@ app.post('/register', (req, res) => __awaiter(void 0, void 0, void 0, function* 
     };
     const result = yield db_index_1.db.query(query);
     if (result.rowCount > 0) {
-        return res.status(409).send({ success: false, message: 'email is not available' });
+        throw new HttpError_1.HttpError(409, "email is not available");
     }
     const insertQuery = {
         text: `INSERT INTO public.jwt_auth(username, password, role)
@@ -91,58 +88,54 @@ app.post('/register', (req, res) => __awaiter(void 0, void 0, void 0, function* 
         values: [email, bcryptjs_1.default.hashSync(password)]
     };
     const insertResult = yield db_index_1.db.query(insertQuery);
-    res.send({ success: true, message: `Register ${email} successfully` });
+    // set successful message
+    res.message = `Register ${email} successfully`;
+    next();
 }));
 /* ------------------------------- login route ------------------------------ */
-app.post('/login', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+app.post('/login', (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     const { username, password } = req.body;
-    try {
-        // empty email or password
-        if (!username || !password) {
-            return res.send({ success: false, message: "email or password is empty" });
-        }
-        const query = {
-            text: `SELECT * FROM public.jwt_auth WHERE username = $1`,
-            values: [username]
-        };
-        const result = yield db_index_1.db.query(query);
-        // not found user
-        if (result.rowCount === 0) {
-            throw new Error(`No user exists: ${username}`);
-        }
-        // wrong password
-        else if (!bcryptjs_1.default.compareSync(password, result.rows[0].password)) {
-            throw new Error("Incorrect password");
-        }
-        // generate tokens
-        const user = { username: result.rows[0].username };
-        const accessToken = jsonwebtoken_1.default.sign(user, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '30s', });
-        const refreshToken = jsonwebtoken_1.default.sign(user, process.env.JWT_REFRESH_TOKEN_SECRET);
-        // update token
-        const updateQuery = {
-            text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
-            values: [username, refreshToken]
-        };
-        res.send({ success: true, data: { accessToken, refreshToken } });
-        yield db_index_1.db.query(updateQuery);
+    // empty email or password
+    if (!username || !password) {
+        throw new HttpError_1.HttpError(301, "email or password is empty");
     }
-    catch (err) {
-        logger.warn('/login: %s', err.message);
-        res.send({ succsss: false, message: "Unable to login" });
+    const query = {
+        text: `SELECT * FROM public.jwt_auth WHERE username = $1`,
+        values: [username]
+    };
+    const result = yield db_index_1.db.query(query);
+    // not found user
+    if (result.rowCount === 0) {
+        throw new HttpError_1.HttpError(301, `No user exists: ${username}`);
     }
+    // wrong password
+    else if (!bcryptjs_1.default.compareSync(password, result.rows[0].password)) {
+        throw new HttpError_1.HttpError(301, `Incorrect Password`);
+    }
+    // generate tokens
+    const user = { username: result.rows[0].username };
+    const accessToken = jsonwebtoken_1.default.sign(user, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '30s', });
+    const refreshToken = jsonwebtoken_1.default.sign(user, process.env.JWT_REFRESH_TOKEN_SECRET);
+    // update token
+    const updateQuery = {
+        text: `UPDATE public.jwt_auth SET token = $2 WHERE username = $1`,
+        values: [username, refreshToken]
+    };
+    // set payload
+    res.data = { accessToken, refreshToken };
+    yield db_index_1.db.query(updateQuery);
+    next();
 }));
 /* ------------------------------ /token route ------------------------------ */
-app.post('/token', validateRefreshToken, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+app.post('/token', validateRefreshToken, (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     if (req.user) {
         const accessToken = jsonwebtoken_1.default.sign({ username: req.user.username }, process.env.JWT_ACCESS_TOKEN_SECRET, { expiresIn: '30s' });
-        res.send({ success: true, data: { accessToken } });
+        res.data = { accessToken };
     }
-    else {
-        res.sendStatus(401);
-    }
+    next();
 }));
 /* ------------------------------ logout route ------------------------------ */
-app.delete('/logout', validateRefreshToken, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+app.delete('/logout', validateRefreshToken, (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     if (req.user) {
         res.send({ success: true, message: `${req.user.username} is logged out` });
         // set token to null
@@ -151,10 +144,9 @@ app.delete('/logout', validateRefreshToken, (req, res) => __awaiter(void 0, void
             values: [req.user.username, null]
         };
         yield db_index_1.db.query(updateQuery);
+        res.message = `Logout ${req.user.username} successfully!`;
     }
-    else {
-        res.sendStatus(403);
-    }
+    next();
 }));
 /* ------------------------------- GET /posts ------------------------------- */
 const posts = [
@@ -167,20 +159,44 @@ const posts = [
         postId: '2'
     }
 ];
-app.get('/posts', (req, res) => {
+app.get('/posts', (req, res, next) => {
     var _a;
     const accessToken = (_a = req.headers.authorization) === null || _a === void 0 ? void 0 : _a.replace('Bearer ', '');
     if (!accessToken) {
-        return res.sendStatus(403);
+        throw new HttpError_1.HttpError(403, "No access token is provided");
     }
     try {
         const decodedUser = jsonwebtoken_1.default.verify(accessToken, process.env.JWT_ACCESS_TOKEN_SECRET);
-        res.send({ success: true, data: posts });
+        res.data = { posts };
+        next();
     }
     catch (e) {
-        logger.error('/posts: %s', e.message);
+        throw new HttpError_1.HttpError(401, "Invalid access token");
+    }
+});
+/* ------------------------------ data handling ----------------------------- */
+app.use((err, req, res, next) => {
+    if (res.data || res.message) {
         res.send({
-            success: false, message: `Invalid access token`
+            success: true,
+            data: res.data,
+            message: res.message
+        });
+    }
+    next();
+});
+/* ----------------------------- error handling ----------------------------- */
+app.use(function (err, req, res, next) {
+    if (err instanceof HttpError_1.HttpError) {
+        res.status(err.status).send({
+            success: false,
+            message: err.message
+        });
+    }
+    else {
+        res.status(500).send({
+            success: false,
+            message: err.message
         });
     }
 });

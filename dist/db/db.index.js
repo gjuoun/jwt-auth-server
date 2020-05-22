@@ -23,7 +23,9 @@ client.connect((err) => {
     if (err) {
         logger.error(err.message);
     }
-    logger.info('connected to DB');
+    else {
+        logger.info('connected to DB');
+    }
 });
 client.on("error", (err) => {
     logger.error(err.message);
